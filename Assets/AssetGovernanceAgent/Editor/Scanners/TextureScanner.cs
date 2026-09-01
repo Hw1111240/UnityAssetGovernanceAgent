@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using AssetGovernanceAgent.Editor.Models;
 using AssetGovernanceAgent.Editor.Rules;
+using AssetGovernanceAgent.Editor.Validation;
 using UnityEditor;
 
 namespace AssetGovernanceAgent.Editor.Scanners
@@ -58,8 +59,10 @@ namespace AssetGovernanceAgent.Editor.Scanners
                     "Texture规则集合不能为空。");
             }
 
-            string normalizedSearchPath = ValidateSearchPath(searchPath);
-            ValidateMaxResults(maxResults);
+            string normalizedSearchPath =
+                GovernanceInputValidator.ValidateSearchPath(searchPath);
+
+            GovernanceInputValidator.ValidateMaxResults(maxResults);
 
             // AssetDatabase.FindAssets的返回顺序不应被视为稳定顺序。
             // 先转换成路径并排序，保证相同工程每次扫描顺序一致。
@@ -180,77 +183,6 @@ namespace AssetGovernanceAgent.Editor.Scanners
                     $"{ruleSet.MaxTextureSize} px。",
                 isAutoFixable: true,
                 suggestedToolName: "update_texture_import_settings");
-        }
-
-        /// <summary>
-        /// 校验并规范化扫描目录。
-        /// </summary>
-        private static string ValidateSearchPath(
-            string searchPath) // 待校验的Unity扫描目录。
-        {
-            if (string.IsNullOrWhiteSpace(searchPath))
-            {
-                throw new ArgumentException(
-                    "扫描目录不能为空。",
-                    nameof(searchPath));
-            }
-
-            string normalizedPath = searchPath
-                .Trim()
-                .Replace('\\', '/')
-                .TrimEnd('/');
-
-            bool isAssetsRoot = string.Equals(
-                normalizedPath,
-                "Assets",
-                StringComparison.Ordinal);
-
-            bool isInsideAssets = normalizedPath.StartsWith(
-                "Assets/",
-                StringComparison.Ordinal);
-
-            if (!isAssetsRoot && !isInsideAssets)
-            {
-                throw new ArgumentException(
-                    "扫描目录只能是Assets或Assets/下的目录。",
-                    nameof(searchPath));
-            }
-
-            string[] pathSegments = normalizedPath.Split('/');
-
-            foreach (string pathSegment in pathSegments)
-            {
-                if (pathSegment == "." || pathSegment == "..")
-                {
-                    throw new ArgumentException(
-                        "扫描目录不能包含“.”或“..”路径段。",
-                        nameof(searchPath));
-                }
-            }
-
-            if (!AssetDatabase.IsValidFolder(normalizedPath))
-            {
-                throw new ArgumentException(
-                    $"扫描目录不是有效的Unity目录：{normalizedPath}",
-                    nameof(searchPath));
-            }
-
-            return normalizedPath;
-        }
-
-        /// <summary>
-        /// 校验最大返回数量，防止无上限返回扫描结果。
-        /// </summary>
-        private static void ValidateMaxResults(
-            int maxResults) // 最大问题数量，合法范围1～1000。
-        {
-            if (maxResults < 1 || maxResults > 1000)
-            {
-                throw new ArgumentOutOfRangeException(
-                    nameof(maxResults),
-                    maxResults,
-                    "最大返回数量必须在1～1000之间。");
-            }
         }
 
         /// <summary>

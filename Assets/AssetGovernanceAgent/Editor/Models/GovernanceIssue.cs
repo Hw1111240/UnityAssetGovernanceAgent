@@ -1,4 +1,5 @@
 using System;
+using AssetGovernanceAgent.Editor.Validation;
 using UnityEngine;
 
 namespace AssetGovernanceAgent.Editor.Models
@@ -95,17 +96,34 @@ namespace AssetGovernanceAgent.Editor.Models
             bool isAutoFixable,                // 是否可受控修复。
             string suggestedToolName = "")     // 建议调用的修复工具。
         {
-            this.issueId = RequireText(issueId, nameof(issueId));
-            this.ruleId = RequireText(ruleId, nameof(ruleId));
-            this.ruleVersion = RequireText(ruleVersion, nameof(ruleVersion));
-            this.assetGuid = RequireText(assetGuid, nameof(assetGuid));
-            this.assetPath = ValidateAssetPath(assetPath);
+            this.issueId = GovernanceInputValidator.RequireText(
+                issueId,
+                nameof(issueId));
+            this.ruleId = GovernanceInputValidator.RequireText(
+                ruleId,
+                nameof(ruleId));
+            this.ruleVersion = GovernanceInputValidator.RequireText(
+                ruleVersion,
+                nameof(ruleVersion));
+            this.assetGuid = GovernanceInputValidator.RequireText(
+                assetGuid,
+                nameof(assetGuid));
+            this.assetPath = GovernanceInputValidator.ValidateAssetPath(
+                assetPath);
             this.category = category;
             this.severity = severity;
-            this.currentValue = RequireText(currentValue, nameof(currentValue));
-            this.expectedValue = RequireText(expectedValue, nameof(expectedValue));
-            this.evidence = RequireText(evidence, nameof(evidence));
-            this.suggestion = RequireText(suggestion, nameof(suggestion));
+            this.currentValue = GovernanceInputValidator.RequireText(
+                currentValue,
+                nameof(currentValue));
+            this.expectedValue = GovernanceInputValidator.RequireText(
+                expectedValue,
+                nameof(expectedValue));
+            this.evidence = GovernanceInputValidator.RequireText(
+                evidence,
+                nameof(evidence));
+            this.suggestion = GovernanceInputValidator.RequireText(
+                suggestion,
+                nameof(suggestion));
             this.isAutoFixable = isAutoFixable;
 
             if (isAutoFixable && string.IsNullOrWhiteSpace(suggestedToolName))
@@ -120,49 +138,5 @@ namespace AssetGovernanceAgent.Editor.Models
                 : string.Empty;
         }
 
-        /// <summary>
-        /// 验证必填文本，防止扫描器生成字段缺失的问题对象。
-        /// </summary>
-        private static string RequireText(
-            string value,          // 需要校验的文本。
-            string parameterName)  // 出错时显示的参数名称。
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                throw new ArgumentException(
-                    "参数不能为空或只包含空白字符。",
-                    parameterName);
-            }
-
-            return value.Trim();
-        }
-
-        /// <summary>
-        /// 验证并统一Unity资源路径格式。
-        /// </summary>
-        private static string ValidateAssetPath(
-            string assetPath) // 必填。需要验证的Unity资源路径。
-        {
-            string normalizedPath = RequireText(
-                assetPath,
-                nameof(assetPath)).Replace('\\', '/');
-
-            bool isInsideAssets = normalizedPath.StartsWith(
-                "Assets/",
-                StringComparison.Ordinal);
-
-            bool containsParentTraversal =
-                normalizedPath.Contains("../") ||
-                normalizedPath.EndsWith("/..", StringComparison.Ordinal);
-
-            if (!isInsideAssets || containsParentTraversal)
-            {
-                throw new ArgumentException(
-                    "资源路径必须位于Assets/目录下，并且不能包含“..”。",
-                    nameof(assetPath));
-            }
-
-            return normalizedPath;
-        }
     }
 }

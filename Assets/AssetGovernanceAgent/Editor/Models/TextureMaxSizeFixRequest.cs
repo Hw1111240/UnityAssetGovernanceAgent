@@ -1,4 +1,5 @@
 using System;
+using AssetGovernanceAgent.Editor.Validation;
 using UnityEngine;
 
 namespace AssetGovernanceAgent.Editor.Models
@@ -12,23 +13,6 @@ namespace AssetGovernanceAgent.Editor.Models
     [Serializable]
     public sealed class TextureMaxSizeFixRequest
     {
-        /// <summary>
-        /// Unity支持的Max Size白名单。
-        /// 即使Agent传入其他整数，也不能直接用于修改Importer。
-        /// </summary>
-        private static readonly int[] SupportedMaxSizes =
-        {
-            32,
-            64,
-            128,
-            256,
-            512,
-            1024,
-            2048,
-            4096,
-            8192
-        };
-
         [SerializeField] private string operationId;
         [SerializeField] private string issueId;
         [SerializeField] private string ruleId;
@@ -113,109 +97,26 @@ namespace AssetGovernanceAgent.Editor.Models
         /// </summary>
         public void Validate()
         {
-            operationId = RequireText(
-                operationId,
-                nameof(operationId));
+            operationId = GovernanceInputValidator.ValidateOperationId(
+                operationId);
+            issueId = GovernanceInputValidator.RequireText(
+                issueId,
+                nameof(issueId));
+            ruleId = GovernanceInputValidator.RequireText(
+                ruleId,
+                nameof(ruleId));
+            ruleVersion = GovernanceInputValidator.RequireText(
+                ruleVersion,
+                nameof(ruleVersion));
+            assetGuid = GovernanceInputValidator.RequireText(
+                assetGuid,
+                nameof(assetGuid));
+            assetPath = GovernanceInputValidator.ValidateAssetPath(
+                assetPath);
 
-            if (!Guid.TryParse(operationId, out _))
-            {
-                throw new ArgumentException(
-                    "operationId必须是标准GUID格式。",
-                    nameof(operationId));
-            }
-
-            issueId = RequireText(issueId, nameof(issueId));
-            ruleId = RequireText(ruleId, nameof(ruleId));
-            ruleVersion = RequireText(ruleVersion, nameof(ruleVersion));
-            assetGuid = RequireText(assetGuid, nameof(assetGuid));
-            assetPath = ValidateAssetPath(assetPath);
-
-            ValidateMaxSize(
+            GovernanceInputValidator.ValidateTextureMaxSizeChange(
                 expectedCurrentMaxSize,
-                nameof(expectedCurrentMaxSize));
-
-            ValidateMaxSize(
-                targetMaxSize,
-                nameof(targetMaxSize));
-
-            if (targetMaxSize > expectedCurrentMaxSize)
-            {
-                throw new ArgumentException(
-                    "治理修复不能将Max Size调整得比扫描值更大。",
-                    nameof(targetMaxSize));
-            }
-        }
-
-        /// <summary>
-        /// 验证必填文本并删除首尾空格。
-        /// </summary>
-        private static string RequireText(
-            string value,         // 需要验证的文本。
-            string parameterName) // 字段不合法时对应的参数名称。
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                throw new ArgumentException(
-                    "参数不能为空或只包含空白字符。",
-                    parameterName);
-            }
-
-            return value.Trim();
-        }
-
-        /// <summary>
-        /// 验证资源路径只能位于Assets目录中。
-        /// </summary>
-        private static string ValidateAssetPath(
-            string assetPath) // 需要验证和规范化的Unity资源路径。
-        {
-            string normalizedPath = RequireText(
-                assetPath,
-                nameof(assetPath))
-                .Replace('\\', '/');
-
-            bool isInsideAssets = normalizedPath.StartsWith(
-                "Assets/",
-                StringComparison.Ordinal);
-
-            string[] pathSegments = normalizedPath.Split('/');
-
-            foreach (string pathSegment in pathSegments)
-            {
-                if (pathSegment == "." || pathSegment == "..")
-                {
-                    throw new ArgumentException(
-                        "资源路径不能包含“.”或“..”路径段。",
-                        nameof(assetPath));
-                }
-            }
-
-            if (!isInsideAssets)
-            {
-                throw new ArgumentException(
-                    "资源路径必须位于Assets/目录下。",
-                    nameof(assetPath));
-            }
-
-            return normalizedPath;
-        }
-
-        /// <summary>
-        /// 验证Max Size必须属于Unity支持的白名单。
-        /// </summary>
-        private static void ValidateMaxSize(
-            int value,            // 需要验证的Max Size。
-            string parameterName) // 不合法时对应的参数名称。
-        {
-            if (Array.IndexOf(SupportedMaxSizes, value) >= 0)
-            {
-                return;
-            }
-
-            throw new ArgumentOutOfRangeException(
-                parameterName,
-                value,
-                "Max Size必须是32、64、128、256、512、1024、2048、4096或8192。");
+                targetMaxSize);
         }
     }
 }
