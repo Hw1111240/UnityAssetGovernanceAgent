@@ -6,7 +6,9 @@ using AssetGovernanceAgent.Editor.Scanners;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
-
+using System;
+using AssetGovernanceAgent.Editor.Services;
+using Object = UnityEngine.Object;
 
 namespace AssetGovernanceAgent.Editor.Tests
 {
@@ -37,7 +39,7 @@ namespace AssetGovernanceAgent.Editor.Tests
         // 根目录下的第二张测试纹理路径，用于验证扫描器处理多个违规纹理的场景。
         private const string SecondTestTexturePath =
             TestFolder + "/SecondOversizedTexture.png";
-        
+
         // 规则集中定义的最大纹理尺寸上限，超过此值即视为违规。
         private const int RuleMaxSize = 2048;
 
@@ -224,7 +226,7 @@ namespace AssetGovernanceAgent.Editor.Tests
                 Is.EqualTo(TestTexturePath),
                 "关闭递归扫描后，不应该返回子目录中的Texture。");
         }
-        
+
         /// <summary>
         /// 验证违规资源数量超过maxResults时，
         /// 扫描器只返回调用方允许的最大问题数量。
@@ -234,17 +236,17 @@ namespace AssetGovernanceAgent.Editor.Tests
         {
             CreateTestTexture(
                 SecondTestTexturePath, // assetPath：第二张违规Texture的资源路径。
-                ImporterMaxSize);      // importerMaxSize：设置为4096，超过2048规则。
+                ImporterMaxSize); // importerMaxSize：设置为4096，超过2048规则。
 
             var scanner = new TextureScanner();
 
             // 先证明测试目录中确实存在两张违规Texture。
             IReadOnlyList<GovernanceIssue> allIssues =
                 scanner.ScanMaxSize(
-                    ruleSet,    // ruleSet：测试规则，Max Size上限为2048。
+                    ruleSet, // ruleSet：测试规则，Max Size上限为2048。
                     TestFolder, // searchPath：测试资源所在目录。
-                    true,       // includeSubdirectories：允许扫描子目录。
-                    100);       // maxResults：最多返回100条，确保本次结果不被截断。
+                    true, // includeSubdirectories：允许扫描子目录。
+                    100); // maxResults：最多返回100条，确保本次结果不被截断。
 
             Assert.That(
                 allIssues.Count,
@@ -254,10 +256,10 @@ namespace AssetGovernanceAgent.Editor.Tests
             // 将返回上限设置为1，验证扫描器会限制结果数量。
             IReadOnlyList<GovernanceIssue> limitedIssues =
                 scanner.ScanMaxSize(
-                    ruleSet,    // ruleSet：使用同一份测试规则。
+                    ruleSet, // ruleSet：使用同一份测试规则。
                     TestFolder, // searchPath：扫描同一个测试目录。
-                    true,       // includeSubdirectories：允许扫描子目录。
-                    1);         // maxResults：最多只能返回1条问题。
+                    true, // includeSubdirectories：允许扫描子目录。
+                    1); // maxResults：最多只能返回1条问题。
 
             Assert.That(
                 limitedIssues.Count,
@@ -269,6 +271,123 @@ namespace AssetGovernanceAgent.Editor.Tests
                 Is.EqualTo(TestTexturePath),
                 "达到返回上限时，应该保留稳定排序后的第一条问题。");
         }
+
+
+        /// <summary>
+        /// 验证Dry Run通过后只会返回等待审批，
+        /// 不会修改Texture Importer的Max Size。
+        /// </summary>
+        [Test]
+        public void DryRun_WhenRequestIsValid_DoesNotModifyImporter()
+        {
+            TextureImporter importer =
+                AssetImporter.GetAtPath(TestTexturePath)
+                    as TextureImporter;
+
+            Assert.That(
+                importer,
+                Is.Not.Null,
+                "测试Texture应该能够取得TextureImporter。");
+
+            int maxSizeBeforeDryRun =
+                importer.maxTextureSize;
+
+            var request = CreateFixRequest(
+                RuleMaxSize); // 将4096修复到规则上限2048。
+
+            var service = new TextureMaxSizeFixService();
+
+            TextureMaxSizeFixResult result =
+                service.DryRun(
+                    request, // 已验证的强类型修复请求。
+                    ruleSet); // 当前实际使用的规则。
+
+            TextureImporter importerAfterDryRun =
+                AssetImporter.GetAtPath(TestTexturePath)
+                    as TextureImporter;
+
+            Assert.That(
+                result.Status,
+                Is.EqualTo(TextureMaxSizeFixStatus.AwaitingApproval),
+                "有效违规请求在Dry Run后应等待本地审批。");
+
+            Assert.That(
+                result.RequiresApproval,
+                Is.True,
+                "Dry Run通过后应该要求本地审批。");
+
+            Assert.That(
+                result.WasModified,
+                Is.False,
+                "Dry Run不能修改任何资源。");
+
+            Assert.That(
+                result.ObservedMaxSize,
+                Is.EqualTo(ImporterMaxSize),
+                "Dry Run应该返回Unity实际读取到的当前Max Size。");
+
+            Assert.That(
+                importerAfterDryRun.maxTextureSize,
+                Is.EqualTo(maxSizeBeforeDryRun),
+                "Dry Run前后Importer Max Size必须完全不变。");
+        }
+
+        /// <summary>
+        /// 验证旧请求在资源已经达到目标值时，
+        /// 返回NoChange且不再次修改、重新导入资源。
+        /// </summary>
+        [Test]
+        public void DryRun_WhenTextureAlreadyMatchesTarget_ReturnsNoChange()
+        {
+            TextureImporter importer =
+                AssetImporter.GetAtPath(TestTexturePath)
+                    as TextureImporter;
+
+            Assert.That(
+                importer,
+                Is.Not.Null,
+                "测试Texture应该能够取得TextureImporter。");
+
+            // 模拟其他操作已经将4096修复为2048，
+            // 当前Dry Run收到的是一条旧的修复请求。
+            importer.maxTextureSize = RuleMaxSize;
+            importer.SaveAndReimport();
+
+            var request = CreateFixRequest(
+                RuleMaxSize); // 旧请求的目标仍然是2048。
+
+            var service = new TextureMaxSizeFixService();
+
+            TextureMaxSizeFixResult result =
+                service.DryRun(
+                    request, // 原始修复请求。
+                    ruleSet); // 当前规则。
+
+            TextureImporter importerAfterDryRun =
+                AssetImporter.GetAtPath(TestTexturePath)
+                    as TextureImporter;
+
+            Assert.That(
+                result.Status,
+                Is.EqualTo(TextureMaxSizeFixStatus.NoChange),
+                "资源已经符合目标值时，应返回NoChange。");
+
+            Assert.That(
+                result.IsSuccessful,
+                Is.True,
+                "NoChange表示目标已经达到，属于成功结果。");
+
+            Assert.That(
+                result.WasModified,
+                Is.False,
+                "NoChange不能再次修改或重新导入资源。");
+
+            Assert.That(
+                importerAfterDryRun.maxTextureSize,
+                Is.EqualTo(RuleMaxSize),
+                "Dry Run后资源仍应保持目标Max Size。");
+        }
+
 
         /// <summary>
         /// 创建测试专用的内存规则。
@@ -389,6 +508,28 @@ namespace AssetGovernanceAgent.Editor.Tests
                 "测试结束后应成功删除自动生成的资源目录。");
 
             AssetDatabase.Refresh();
+        }
+
+        /// <summary>
+        /// 创建针对当前测试Texture的Max Size修复请求。
+        /// 请求快照始终记录扫描阶段的4096，
+        /// 用于模拟真实项目中“先扫描，再生成修复计划”的流程。
+        /// </summary>
+        private TextureMaxSizeFixRequest CreateFixRequest(
+            int targetMaxSize) // 必填。期望修复到的Max Size，例如2048。
+        {
+            string assetGuid =
+                AssetDatabase.AssetPathToGUID(TestTexturePath);
+
+            return new TextureMaxSizeFixRequest(
+                Guid.NewGuid().ToString(), // operationId：每次请求使用新的操作编号。
+                $"{TextureRuleIds.MaxTextureSize}:{assetGuid}", // issueId：规则与资源GUID组成的问题编号。
+                TextureRuleIds.MaxTextureSize, // ruleId：当前只处理Max Size规则。
+                ruleSet.RuleVersion, // ruleVersion：使用测试规则的实际版本。
+                assetGuid, // assetGuid：测试Texture的稳定资源标识。
+                TestTexturePath, // assetPath：生成请求时记录的路径快照。
+                ImporterMaxSize, // expectedCurrentMaxSize：扫描时记录的4096。
+                targetMaxSize); // targetMaxSize：本次希望修复到的目标值。
         }
     }
 }
