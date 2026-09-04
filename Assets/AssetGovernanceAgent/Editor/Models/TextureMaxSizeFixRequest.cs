@@ -21,6 +21,7 @@ namespace AssetGovernanceAgent.Editor.Models
         [SerializeField] private string assetPath;
         [SerializeField] private int expectedCurrentMaxSize;
         [SerializeField] private int targetMaxSize;
+      
 
         /// <summary>
         /// 本次操作的唯一编号，用于关联日志和防止重复执行。
@@ -68,14 +69,14 @@ namespace AssetGovernanceAgent.Editor.Models
         /// 创建一条Max Size修复请求。
         /// </summary>
         public TextureMaxSizeFixRequest(
-            string operationId,           // 必填。标准GUID格式的操作编号。
-            string issueId,               // 必填。扫描器生成的问题编号。
-            string ruleId,                // 必填。对应的确定性规则编号。
-            string ruleVersion,           // 必填。生成请求时的规则版本。
-            string assetGuid,              // 必填。Unity资源GUID。
-            string assetPath,              // 必填。Assets/下的资源路径。
-            int expectedCurrentMaxSize,    // 必填。扫描时观察到的Max Size。
-            int targetMaxSize)             // 必填。需要修改到的Max Size。
+            string operationId, // 必填。标准GUID格式的操作编号。
+            string issueId, // 必填。扫描器生成的问题编号。
+            string ruleId, // 必填。对应的确定性规则编号。
+            string ruleVersion, // 必填。生成请求时的规则版本。
+            string assetGuid, // 必填。Unity资源GUID。
+            string assetPath, // 必填。Assets/下的资源路径。
+            int expectedCurrentMaxSize, // 必填。扫描时观察到的Max Size。
+            int targetMaxSize) // 必填。需要修改到的Max Size。
         {
             this.operationId = operationId;
             this.issueId = issueId;
@@ -85,7 +86,6 @@ namespace AssetGovernanceAgent.Editor.Models
             this.assetPath = assetPath;
             this.expectedCurrentMaxSize = expectedCurrentMaxSize;
             this.targetMaxSize = targetMaxSize;
-
             Validate();
         }
 
@@ -113,7 +113,7 @@ namespace AssetGovernanceAgent.Editor.Models
                 nameof(assetGuid));
             assetPath = GovernanceInputValidator.ValidateAssetPath(
                 assetPath);
-
+            
             GovernanceInputValidator.ValidateTextureMaxSizeChange(
                 expectedCurrentMaxSize,
                 targetMaxSize);

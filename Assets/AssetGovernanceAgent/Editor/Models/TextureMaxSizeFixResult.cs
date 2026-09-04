@@ -46,6 +46,15 @@ namespace AssetGovernanceAgent.Editor.Models
         [SerializeField] private string errorCode;
         [SerializeField] private string message;
 
+        [SerializeField] private TextureMaxSizeFixRequest request;
+
+
+        /// <summary>
+        /// 当前结果关联的原始修复请求。
+        /// 审批仓库和后续执行服务使用它做精确匹配。
+        /// </summary>
+        internal TextureMaxSizeFixRequest Request => request;
+
         /// <summary>
         /// 操作唯一编号，用于关联请求、审批和审计日志。
         /// </summary>
@@ -159,6 +168,7 @@ namespace AssetGovernanceAgent.Editor.Models
 
             // 防止JSON反序列化绕过请求的构造函数校验。
             request.Validate();
+            this.request = request;
 
             if (!Enum.IsDefined(typeof(TextureMaxSizeFixStatus), status))
             {
