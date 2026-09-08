@@ -9,6 +9,7 @@ using UnityEngine;
 using System;
 using AssetGovernanceAgent.Editor.Services;
 using Object = UnityEngine.Object;
+using AssetGovernanceAgent.Editor.Approvals;
 
 namespace AssetGovernanceAgent.Editor.Tests
 {
@@ -388,6 +389,265 @@ namespace AssetGovernanceAgent.Editor.Tests
                 "Dry Run后资源仍应保持目标Max Size。");
         }
 
+
+        /// <summary>
+        /// 验证通过Dry Run但尚未批准的请求，
+        /// 不能被审批仓库视为可执行请求。
+        /// </summary>
+        [Test]
+        public void ApprovalStore_WhenRequestIsPending_IsNotExecutable()
+        {
+            var request = CreateFixRequest(
+                RuleMaxSize); // 目标值为2048。
+
+            var fixService = new TextureMaxSizeFixService();
+
+            TextureMaxSizeFixResult dryRunResult =
+                fixService.DryRun(
+                    request, // 已生成的修复请求。
+                    ruleSet); // 当前测试规则。
+
+            TextureMaxSizeFixApprovalRecord pendingRecord =
+                TextureMaxSizeFixApprovalStore.RegisterPending(
+                    dryRunResult); // Dry Run通过后登记待审批记录。
+
+            bool canExecute =
+                TextureMaxSizeFixApprovalStore.TryGetApproved(
+                    request, // 尚未批准的原始请求。
+                    out TextureMaxSizeFixApprovalRecord approvedRecord);
+
+            Assert.That(
+                pendingRecord.Decision,
+                Is.EqualTo(TextureMaxSizeApprovalDecision.Pending),
+                "新登记的审批记录应该处于Pending状态。");
+
+            Assert.That(
+                canExecute,
+                Is.False,
+                "Pending状态不能取得可执行授权。");
+
+            Assert.That(
+                approvedRecord,
+                Is.Null,
+                "未批准请求不应该返回已批准记录。");
+        }
+
+        /// <summary>
+        /// 验证用户批准一条请求后，
+        /// 使用相同OperationId但篡改目标值的请求仍不能取得授权。
+        /// </summary>
+        [Test]
+        public void ApprovalStore_WhenApprovedRequestIsChanged_RejectsExecution()
+        {
+            var approvedRequest = CreateFixRequest(
+                RuleMaxSize); // 原始批准目标为2048。
+
+            var fixService = new TextureMaxSizeFixService();
+
+            TextureMaxSizeFixResult dryRunResult =
+                fixService.DryRun(
+                    approvedRequest, // 原始修复请求。
+                    ruleSet); // 当前测试规则。
+
+            TextureMaxSizeFixApprovalStore.RegisterPending(
+                dryRunResult); // 先登记为待审批。
+
+            TextureMaxSizeFixApprovalRecord approvedRecord =
+                TextureMaxSizeFixApprovalStore.Approve(
+                    approvedRequest, // 只批准当前这条完整请求。
+                    "EditMode测试批准"); // 测试备注。
+
+            var changedRequest = new TextureMaxSizeFixRequest(
+                approvedRequest.OperationId, // 故意复用相同操作编号。
+                approvedRequest.IssueId, // 保持相同问题编号。
+                approvedRequest.RuleId, // 保持相同规则编号。
+                approvedRequest.RuleVersion, // 保持相同规则版本。
+                approvedRequest.AssetGuid, // 保持相同资源GUID。
+                approvedRequest.AssetPath, // 保持相同资源路径。
+                approvedRequest.ExpectedCurrentMaxSize, // 保持扫描快照值4096。
+                1024); // 故意把目标值从2048篡改为1024。
+
+            bool canExecuteChangedRequest =
+                TextureMaxSizeFixApprovalStore.TryGetApproved(
+                    changedRequest, // 与已批准请求参数不一致的候选请求。
+                    out TextureMaxSizeFixApprovalRecord matchedRecord);
+
+            Assert.That(
+                approvedRecord.CanExecute,
+                Is.True,
+                "原始批准记录应该允许执行。");
+
+            Assert.That(
+                canExecuteChangedRequest,
+                Is.False,
+                "即使OperationId相同，目标值被篡改后也必须拒绝执行。");
+
+            Assert.That(
+                matchedRecord,
+                Is.Null,
+                "参数不一致的请求不应该返回已批准记录。");
+        }
+
+
+        /// <summary>
+        /// 待审批或已拒绝的请求都不能写入。
+        /// </summary>
+        [TestCase(false)] // 保持待审批。
+        [TestCase(true)] // 模拟用户拒绝。
+        public void ExecuteApproved_WhenNotApproved_DoesNotWrite(
+            bool rejectRequest) // 是否先拒绝请求。
+        {
+            var service = new TextureMaxSizeFixService();
+            var request = CreateFixRequest(RuleMaxSize); // 目标2048。
+
+            var preview = service.DryRun(
+                request, // 当前请求。
+                ruleSet); // 当前规则。
+
+            TextureMaxSizeFixApprovalStore.RegisterPending(preview);
+
+            if (rejectRequest)
+            {
+                TextureMaxSizeFixApprovalStore.Reject(
+                    request, // 待审批请求。
+                    "测试拒绝"); // 拒绝原因。
+            }
+
+            var result = service.ExecuteApproved(
+                request, // 尚未获得批准。
+                ruleSet); // 当前规则。
+
+            Assert.That(result.Status,
+                Is.EqualTo(TextureMaxSizeFixStatus.Failed));
+
+            Assert.That(result.ErrorCode,
+                Is.EqualTo("APPROVAL_REQUIRED_OR_MISMATCH"));
+
+            Assert.That(result.WriteAttempted, Is.False,
+                "未批准时不能进入写入阶段。");
+
+            Assert.That(GetTestImporter().maxTextureSize,
+                Is.EqualTo(ImporterMaxSize),
+                "Max Size应保持4096。");
+        }
+
+        /// <summary>
+        /// 批准后修复成功，重复调用不再写入。
+        /// </summary>
+        [Test]
+        public void ExecuteApproved_WhenApproved_AppliesAndRepeatReturnsNoChange()
+        {
+            var service = new TextureMaxSizeFixService();
+            var request = CreateFixRequest(RuleMaxSize); // 目标2048。
+
+            var preview = service.DryRun(
+                request, // 当前请求。
+                ruleSet); // 当前规则。
+
+            TextureMaxSizeFixApprovalStore.RegisterPending(preview);
+
+            // 测试中模拟用户批准；正式流程由Unity窗口触发。
+            TextureMaxSizeFixApprovalStore.Approve(
+                request, // 批准完整请求。
+                "测试批准"); // 审批备注。
+
+            var firstResult = service.ExecuteApproved(
+                request, // 已批准请求。
+                ruleSet); // 当前规则。
+
+            Assert.That(firstResult.Status,
+                Is.EqualTo(TextureMaxSizeFixStatus.Applied),
+                firstResult.Message);
+
+            Assert.That(firstResult.WriteAttempted, Is.True);
+            Assert.That(firstResult.HasObservedMaxSize, Is.True);
+            Assert.That(firstResult.ObservedMaxSize, Is.EqualTo(RuleMaxSize));
+
+            Assert.That(GetTestImporter().maxTextureSize,
+                Is.EqualTo(RuleMaxSize),
+                "实际Importer应已修改为2048。");
+
+            // 独立调用扫描器，确认违规问题已消失。
+            var issues = new TextureScanner().ScanMaxSize(
+                ruleSet, // 当前规则。
+                TestFolder, // 仅检查测试目录。
+                true, // 包含子目录。
+                100); // 返回上限。
+
+            Assert.That(issues, Is.Empty, "修复后不应再报告Max Size违规。");
+
+            // 复用同一请求，不生成新的OperationId。
+            var secondResult = service.ExecuteApproved(
+                request, // 重复请求。
+                ruleSet); // 同一规则。
+
+            Assert.That(secondResult.Status,
+                Is.EqualTo(TextureMaxSizeFixStatus.NoChange));
+
+            Assert.That(secondResult.WriteAttempted, Is.False,
+                "第二次调用不应再次进入写入阶段。");
+
+            Assert.That(GetTestImporter().maxTextureSize,
+                Is.EqualTo(RuleMaxSize));
+        }
+
+        /// <summary>
+        /// 批准后资源变化，旧计划不能覆盖新配置。
+        /// </summary>
+        [Test]
+        public void ExecuteApproved_WhenStateChangesAfterApproval_DoesNotWrite()
+        {
+            var service = new TextureMaxSizeFixService();
+            var request = CreateFixRequest(RuleMaxSize); // 快照4096，目标2048。
+
+            var preview = service.DryRun(
+                request, // 当前请求。
+                ruleSet); // 当前规则。
+
+            TextureMaxSizeFixApprovalStore.RegisterPending(preview);
+
+            TextureMaxSizeFixApprovalStore.Approve(
+                request, // 批准当前计划。
+                "测试批准"); // 审批备注。
+
+            // 模拟批准后，其他操作把配置改成8192。
+            var importer = GetTestImporter();
+            importer.maxTextureSize = 8192;
+            importer.SaveAndReimport();
+
+            var result = service.ExecuteApproved(
+                request, // 仍携带4096的旧快照。
+                ruleSet); // 当前规则。
+
+            Assert.That(result.Status,
+                Is.EqualTo(TextureMaxSizeFixStatus.Failed));
+
+            Assert.That(result.ErrorCode,
+                Is.EqualTo("RESOURCE_STATE_CHANGED"));
+
+            Assert.That(result.WriteAttempted, Is.False,
+                "旧计划不能进入写入阶段。");
+
+            Assert.That(result.HasObservedMaxSize, Is.True);
+            Assert.That(result.ObservedMaxSize, Is.EqualTo(8192));
+
+            Assert.That(GetTestImporter().maxTextureSize,
+                Is.EqualTo(8192),
+                "不能把新配置覆盖成旧计划的目标值。");
+        }
+
+        /// <summary>
+        /// 取得当前测试纹理的Importer。
+        /// </summary>
+        private static TextureImporter GetTestImporter()
+        {
+            var importer =
+                AssetImporter.GetAtPath(TestTexturePath) as TextureImporter;
+
+            Assert.That(importer, Is.Not.Null, "测试纹理Importer不存在。");
+
+            return importer;
+        }
 
         /// <summary>
         /// 创建测试专用的内存规则。

@@ -145,6 +145,12 @@ namespace AssetGovernanceAgent.Editor.Models
             status == TextureMaxSizeFixStatus.Applied ||
             status == TextureMaxSizeFixStatus.NoChange;
 
+
+        [SerializeField] private bool writeAttempted;
+
+        public bool WriteAttempted => writeAttempted; //是否进入过资源写入阶段
+
+
         /// <summary>
         /// 创建一条结构化修复结果。
         ///
@@ -158,7 +164,8 @@ namespace AssetGovernanceAgent.Editor.Models
             bool hasObservedMaxSize, // 必填。是否读取到实际Max Size。
             int observedMaxSize, // 读取到的实际Max Size；未读取时传0。
             string message, // 必填。结果说明。
-            string errorCode = "" // Failed状态必填，其他状态应为空。
+            string errorCode = "", // Failed状态必填，其他状态应为空。
+            bool writeAttempted = false // 是否进入过资源写入阶段 
         )
         {
             if (request == null)
@@ -202,6 +209,8 @@ namespace AssetGovernanceAgent.Editor.Models
 
             this.status = status;
 
+            this.writeAttempted= writeAttempted||status==TextureMaxSizeFixStatus.Applied;
+            
             expectedCurrentMaxSize =
                 request.ExpectedCurrentMaxSize;
 
